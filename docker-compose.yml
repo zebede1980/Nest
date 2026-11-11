@@ -1,0 +1,28 @@
+services:
+  nest:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: nest:latest
+    container_name: nest
+    restart: unless-stopped
+    ports:
+      # 3070 on the host for direct checks (curl, SSH tunnel). nginx reaches the
+      # container as nest:3000 over nginx-proxy-nw and doesn't use this.
+      - "127.0.0.1:3070:3000"
+    volumes:
+      - ./data:/app/data
+    environment:
+      APP_URL: https://nest.terminuscloud.giize.com
+    env_file:
+      # Optional overrides; see .env.example. Starts without it.
+      - path: .env
+        required: false
+    networks:
+      # Shared with nginx-proxy-manager, so the proxy host can target
+      # http://nest:3000 by container name rather than by host IP.
+      - nginx-proxy-nw
+
+networks:
+  nginx-proxy-nw:
+    external: true

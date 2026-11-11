@@ -1,0 +1,13 @@
+{
+  "extends": "@tsconfig/svelte/tsconfig.json",
+  "compilerOptions": {
+    "target": "es2022",
+    "lib": ["es2022", "dom", "dom.iterable"],
+    "types": ["vite/client"],
+    "noEmit": true,
+    "strict": true,
+    "isolatedModules": true,
+    "moduleDetection": "force"
+  },
+  "include": ["client/src/**/*.ts", "client/src/**/*.svelte", "shared/**/*.ts", "vite.config.ts"]
+}

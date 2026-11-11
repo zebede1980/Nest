@@ -1,0 +1,3 @@
+#!/bin/sh
+# Nest admin from the command line: nest help
+exec node --disable-warning=ExperimentalWarning /app/dist-server/server/src/cli.js "$@"
