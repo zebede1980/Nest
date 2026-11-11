@@ -52,7 +52,7 @@ Joe and Nia's home-improvement tracker (started 2026-11-11). A shared list of jo
 - `server/src/` Fastify app: `house.ts` (jobs, rooms, costs, trades, notes, photos), `accounts.ts`, `push.ts`, `notify.ts`, `scheduler.ts`, `gcal.ts`, `cli.ts`.
 - `client/src/` Svelte 5 (runes): `screens/`, `components/`, `lib/`. Styles and tokens in `client/src/app.css`.
 - `tests/` vitest against the real app with an in-memory database.
-- `tools/` `make-icons.mjs` (icon PNGs from `client/public/icon.svg`), `seed-demo.mjs` (demo house for a scratch copy), `check-ui.mjs` (headless WebKit at 375/390/430).
+- `tools/` `make-icons.mjs` (icon PNGs from `client/public/icon.svg`), `seed-demo.mjs` (demo house for a scratch copy), `check-ui.mjs` (headless WebKit at 375/390/430; changes data), `check-live.mjs` (look-only).
 
 ## Working on it
 
@@ -73,6 +73,8 @@ node tools/check-ui.mjs http://localhost:3072 joe some-password shots
 ```
 
 `PROBE=1` plants an over-wide element so you can see the sideways-scroll check fail.
+
+`tools/check-live.mjs <url> <user> <password> <dir>` only looks (every tab at 390px, nothing changed), so it's safe against the live copy with a temporary account. Run it against an **empty** house too: the seeded check never sees the first-day screens.
 
 ## Deploy
 

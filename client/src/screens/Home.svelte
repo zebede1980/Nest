@@ -154,7 +154,7 @@
     gap: 12px;
     padding: 28px 22px;
   }
-  .welcome .big {
+  .welcome div.big {
     font-size: 2.6rem;
     line-height: 1;
   }
