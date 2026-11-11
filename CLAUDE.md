@@ -52,7 +52,7 @@ Joe and Nia's home-improvement tracker (started 2026-11-11). A shared list of jo
 - `server/src/` Fastify app: `house.ts` (jobs, rooms, costs, trades, notes, photos), `accounts.ts`, `push.ts`, `notify.ts`, `scheduler.ts`, `gcal.ts`, `cli.ts`.
 - `client/src/` Svelte 5 (runes): `screens/`, `components/`, `lib/`. Styles and tokens in `client/src/app.css`.
 - `tests/` vitest against the real app with an in-memory database.
-- `tools/` `make-icons.mjs` (icon PNGs from `client/public/icon.svg`), `seed-demo.mjs` (demo house for a scratch copy), `check-ui.mjs` (headless WebKit at 375/390/430; changes data), `check-live.mjs` (look-only).
+- `tools/` `make-icons.mjs` (icon PNGs from `client/public/icon.svg`), `seed-demo.mjs` (demo house for a scratch copy), `check-ui.mjs` (headless WebKit at 375/390/430; changes data), `check-live.mjs` (look-only), `check-link.mjs` (a sign-in link: preview fetches, then a real press of the button; uses the link up, so make it for a temporary account).
 
 ## Working on it
 

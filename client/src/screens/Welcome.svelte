@@ -3,11 +3,16 @@
   import { app } from '../lib/state.svelte';
   import { isIOS, isStandalone } from '../lib/push';
   import { navigate } from '../lib/router.svelte';
+  import { onMount } from 'svelte';
 
   // Where a sign-in link lands. On an iPhone in Safari, that's the moment to get the
   // app onto the Home Screen; anywhere else there's nothing to explain.
   const show = isIOS() && !isStandalone();
-  if (!show) navigate('/', { replace: true });
+  // After mounting, not while the page is being drawn: changing the route mid-draw
+  // left a blank screen.
+  onMount(() => {
+    if (!show) navigate('/', { replace: true });
+  });
 </script>
 
 {#if show}
