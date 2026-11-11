@@ -209,6 +209,11 @@ export class Accounts {
     return this.useToken(digest(token), 'link');
   }
 
+  /** Whose link this is, if it's still good. Looking doesn't use it up. */
+  peekLink(token: string): User | null {
+    return this.useToken(digest(token), 'link', false);
+  }
+
   useCode(code: string): User | null {
     const raw = normaliseCode(code);
     if (raw.length !== 8) return null;
@@ -220,7 +225,7 @@ export class Accounts {
     this.db.prepare('INSERT INTO login_tokens (id, user_id, kind, created_at, expires_at) VALUES (?, ?, ?, ?, ?)').run(id, userId, kind, now, now + ms);
   }
 
-  private useToken(id: string, kind: 'link' | 'code'): User | null {
+  private useToken(id: string, kind: 'link' | 'code', spend = true): User | null {
     const row = this.db.prepare('SELECT user_id, expires_at, used_at FROM login_tokens WHERE id = ? AND kind = ?').get(id, kind) as
       | { user_id: number; expires_at: number; used_at: number | null }
       | undefined;
@@ -228,7 +233,7 @@ export class Accounts {
     if (!row || row.used_at || row.expires_at <= now) return null;
     const user = this.findById(row.user_id);
     if (!user || user.disabled) return null;
-    this.db.prepare('UPDATE login_tokens SET used_at = ? WHERE id = ?').run(now, id);
+    if (spend) this.db.prepare('UPDATE login_tokens SET used_at = ? WHERE id = ?').run(now, id);
     return user;
   }
 

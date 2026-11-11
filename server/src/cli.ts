@@ -137,7 +137,7 @@ async function main(argv: string[]): Promise<void> {
     case 'login-link': {
       const u = user(name);
       console.log(`${APP_URL}/l/${accounts.createLink(u.id)}`);
-      console.log(`One use only, for 7 days. Opening it signs ${u.displayName} in on that device.`);
+      console.log(`Good for 7 days and one sign-in: ${u.displayName} opens it and presses Sign in. Safe to send by WhatsApp or Messages.`);
       break;
     }
     case 'code': {

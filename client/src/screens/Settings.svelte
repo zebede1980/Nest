@@ -365,7 +365,7 @@
         </form>
         {#if link}
           <div class="linkbox">
-            <div class="small muted">{link.who}’s way in. It works once, within 7 days; send it however you like.</div>
+            <div class="small muted">{link.who}’s way in. It signs one device in, within 7 days. Send it however you like: WhatsApp and Messages can preview it without using it up.</div>
             <code>{link.url}</code>
             <button class="btn sage small" onclick={shareLink}><Icon name="share" size={16} />Share link</button>
           </div>

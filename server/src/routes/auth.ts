@@ -1,4 +1,4 @@
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyReply } from 'fastify';
 import { APP_NAME, APP_URL } from '../config.js';
 import { LINK_MS } from '../accounts.js';
 import { BadInput, body, bool, has, hm, idParam, oneOf, requireAdmin, requireUser, SESSION_COOKIE, setSessionCookie, text, type Ctx } from '../http.js';
@@ -118,23 +118,51 @@ export function authRoutes(app: FastifyInstance, ctx: Ctx): void {
     return { ok: true };
   });
 
-  // One-time sign-in links: tap it and you're in.
-  app.get('/l/:token', async (req, reply) => {
+  // One-time sign-in links. Opening the link only shows a button; pressing it is what
+  // signs you in and uses the link up. Messaging apps (WhatsApp, iMessage) fetch a link
+  // to draw its preview the moment it's pasted, and that must not spend it.
+  const page = (body: string) =>
+    `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+     <meta name="robots" content="noindex"><meta property="og:title" content="Sign in to ${APP_NAME}">
+     <meta property="og:description" content="Tap to open ${APP_NAME} and sign in."><meta property="og:image" content="${APP_URL}/icon-512.png">
+     <link rel="icon" href="/icon.svg"><title>${APP_NAME}</title>
+     <body style="font:18px/1.5 system-ui,sans-serif;max-width:26em;margin:0 auto;padding:12vh 24px 0;color:#2B2622;background:#F5EFE6;text-align:center">
+     <img src="/icon-192.png" alt="" width="84" height="84" style="border-radius:20px">${body}</body></html>`;
+  const validToken = (req: { params: unknown }) => {
     const token = (req.params as { token: string }).token;
-    const user = /^[A-Za-z0-9_-]{20,100}$/.test(token) ? ctx.accounts.useLink(token) : null;
-    if (!user) {
-      return reply
-        .code(410)
-        .type('text/html; charset=utf-8')
-        .header('Cache-Control', 'no-store')
-        .send(
-          `<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><title>${APP_NAME}</title>
-           <body style="font:18px/1.5 system-ui,sans-serif;max-width:32em;margin:3em auto;padding:0 16px;color:#2B2622;background:#F5EFE6">
-           <h1>${APP_NAME}</h1><p>This sign-in link has already been used or is out of date.</p>
-           <p>Ask for a new one, or <a style="color:#9A4424" href="/">sign in with your password</a>.</p></body>`,
-        );
-    }
+    return /^[A-Za-z0-9_-]{20,100}$/.test(token) ? token : null;
+  };
+  const html = (reply: FastifyReply, code: number, body: string) => reply.code(code).type('text/html; charset=utf-8').header('Cache-Control', 'no-store').send(page(body));
+  const spent = (reply: FastifyReply) =>
+    html(
+      reply,
+      410,
+      `<h1 style="font:600 28px Georgia,serif">${APP_NAME}</h1><p>This sign-in link has already been used or is out of date.</p>
+       <p>Ask for a new one, or <a style="color:#9A4424" href="/">sign in with your password</a>.</p>`,
+    );
+
+  app.get('/l/:token', async (req, reply) => {
+    const token = validToken(req);
+    const user = token ? ctx.accounts.peekLink(token) : null;
+    if (!user) return spent(reply);
+    return html(
+      reply,
+      200,
+      `<h1 style="font:600 28px Georgia,serif;margin:18px 0 4px">Hello, ${escapeHtml(user.displayName)}</h1><p style="margin:0 0 28px;color:#6F655C">Your ${APP_NAME} is ready.</p>
+       <form method="post"><button style="font:600 18px system-ui,sans-serif;color:#fff;background:#C2643E;border:0;border-radius:28px;padding:16px 36px;width:100%;max-width:18em">Sign in</button></form>`,
+    );
+  });
+
+  // The button's form post carries nothing; the token is in the address.
+  app.addContentTypeParser('application/x-www-form-urlencoded', { parseAs: 'string', bodyLimit: 1024 }, (_req, _body, done) => done(null, {}));
+
+  app.post('/l/:token', async (req, reply) => {
+    const token = validToken(req);
+    const user = token ? ctx.accounts.useLink(token) : null;
+    if (!user) return spent(reply);
     setSessionCookie(req, reply, ctx.accounts.startSession(user.id, req.headers['user-agent']));
-    return reply.header('Cache-Control', 'no-store').redirect('/welcome');
+    return reply.header('Cache-Control', 'no-store').redirect('/welcome', 303);
   });
 }
+
+const escapeHtml = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);

@@ -37,7 +37,7 @@ Joe and Nia's home-improvement tracker (started 2026-11-11). A shared list of jo
 ## Sign-in
 
 - App login with a year-long cookie (`nest_session`). **No NPM Basic Auth**: it breaks Home Screen apps.
-- **The Home Screen app has its own cookies, separate from Safari.** A sign-in link (`/l/<token>`, 7 days) signs Safari in and lands on `/welcome`, which shows how to install. The installed app opens on "I have a code": an 8-character device code made in Settings (or `nest code <name>`).
+- **The Home Screen app has its own cookies, separate from Safari.** A sign-in link (`/l/<token>`, 7 days, one sign-in) opens a page with a Sign in button; pressing it signs Safari in and lands on `/welcome`, which shows how to install. **Opening the link must never spend it:** WhatsApp and Messages fetch a link for its preview the moment it's pasted, which used up Nia's first link (2026-11-11). Only the button's POST spends it. The installed app opens on "I have a code": an 8-character device code made in Settings (or `nest code <name>`).
 - 401 means only "no session" (the client signs out on it), so never pass on someone else's 401. Wrong password or code is 403. Changes need header `x-nest: 1`.
 
 ## Google calendar

@@ -100,6 +100,29 @@ describe('sign-in', () => {
     expect((await a.app.inject({ method: 'GET', url: '/api/house' })).statusCode).toBe(401);
     expect((await a.app.inject({ method: 'GET', url: '/api/photos/1' })).statusCode).toBe(401);
   });
+
+  it('a sign-in link survives being looked at (a WhatsApp preview) and is spent by the button', async () => {
+    const u = a.ctx.accounts.create('nia', 'Nia <3', 'member');
+    const url = `/l/${a.ctx.accounts.createLink(u.id)}`;
+    // WhatsApp, iMessage and friends fetch the link as soon as it's pasted. Twice, for luck.
+    for (let i = 0; i < 2; i++) {
+      const look = await a.app.inject({ method: 'GET', url, headers: { 'user-agent': 'WhatsApp/2.23.20.0' } });
+      expect(look.statusCode).toBe(200);
+      expect(look.cookies).toEqual([]);
+      expect(look.body).toContain('Hello, Nia &#60;3');
+      expect(look.body).toContain('<form method="post">');
+    }
+    // The button is an ordinary form post, as a browser sends it.
+    const press = await a.app.inject({ method: 'POST', url, headers: { 'content-type': 'application/x-www-form-urlencoded' }, payload: '' });
+    expect(press.statusCode).toBe(303);
+    expect(press.headers.location).toBe('/welcome');
+    const cookie = `nest_session=${press.cookies.find((x) => x.name === 'nest_session')!.value}`;
+    expect((await a.app.inject({ method: 'GET', url: '/api/me', headers: { cookie } })).json().user.username).toBe('nia');
+    // Once only.
+    expect((await a.app.inject({ method: 'POST', url, headers: { 'content-type': 'application/x-www-form-urlencoded' }, payload: '' })).statusCode).toBe(410);
+    expect((await a.app.inject({ method: 'GET', url })).statusCode).toBe(410);
+    expect((await a.app.inject({ method: 'GET', url: '/l/not-a-real-link-at-all-000' })).statusCode).toBe(410);
+  });
 });
 
 describe('the house', () => {
