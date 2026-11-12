@@ -9,6 +9,15 @@ Joe and Nia's home-improvement tracker (started 2026-11-11). A shared list of jo
 - **Rooms** (his list, his order, seeded in `server/src/db.ts`): Kitchen, Cwtch, The Den, Downstairs bathroom, Office, Hallway and Landing, Utility Room, Our bedroom, Olly's Room, Carys's Room, Spare Room, Box Room, Upstairs Bathroom. **Cwtch is Welsh, not a typo.**
 - **Address:** https://nest.terminuscloud.giize.com
 
+## Where we are (2026-11-12)
+
+- **v0.1.0 is live** at the address above. Everything Joe asked for is built: the list, rooms, sizes, steps, costs and people we pay, photos and receipts, reminders and heads-ups, ideas, notes, upkeep, shopping, progress with the done timeline, and the Google calendar link.
+- Accounts `joe` (admin) and `nia` (member). Both have signed in through their links and Joe has started adding jobs. **The live data is real now: never test against it** beyond the look-only checks with a temporary account.
+- **Verified:** 33 tests; headless WebKit at 375/390/430 on a seeded scratch copy; the look-only check on the live address; a live add-job and photo upload through the proxy; the sign-in link flow on the live address (`tools/check-link.mjs`).
+- **Not yet verified, because it needs a real iPhone or real Google:** installing to the Home Screen, the notification permission prompt, a real reminder arriving, the badge number, and the calendar against real Google (tests use a fake). Neither person has a device registered for push yet (`nest list-users` shows 0 devices). When Joe reports on these, start with `nest devices <name>`, `nest nudges <name>` and `nest sent <name>`.
+- Nothing is half-built and there is no to-do list. Next work comes from what Joe and Nia say after using it.
+- **The GitHub repo is public.** Keep passwords, sign-in links, calendar IDs, key files and anything from the live data out of commits, this file and the README. `README.md` is the public-facing guide; this file is the working notes.
+
 ## How it works
 
 - **The whole house in one call.** `GET /api/house` returns everything (`House` in `shared/model.ts`): it's two people and a few hundred jobs. The client keeps it in `app.house` and derives every screen from it (`client/src/lib/house.ts`). Changes go through `act()` in `client/src/lib/state.svelte.ts`: run the call, refresh the house, toast (with Undo where there is one). Ticks are optimistic.
@@ -52,7 +61,8 @@ Joe and Nia's home-improvement tracker (started 2026-11-11). A shared list of jo
 - `server/src/` Fastify app: `house.ts` (jobs, rooms, costs, trades, notes, photos), `accounts.ts`, `push.ts`, `notify.ts`, `scheduler.ts`, `gcal.ts`, `cli.ts`.
 - `client/src/` Svelte 5 (runes): `screens/`, `components/`, `lib/`. Styles and tokens in `client/src/app.css`.
 - `tests/` vitest against the real app with an in-memory database.
-- `tools/` `make-icons.mjs` (icon PNGs from `client/public/icon.svg`), `seed-demo.mjs` (demo house for a scratch copy), `check-ui.mjs` (headless WebKit at 375/390/430; changes data), `check-live.mjs` (look-only), `check-link.mjs` (a sign-in link: preview fetches, then a real press of the button; uses the link up, so make it for a temporary account).
+- `docs/screens/` the README's screenshots, retaken with `tools/readme-shots.mjs` from a seeded scratch copy.
+- `tools/` `readme-shots.mjs`, `make-icons.mjs` (icon PNGs from `client/public/icon.svg`), `seed-demo.mjs` (demo house for a scratch copy), `check-ui.mjs` (headless WebKit at 375/390/430; changes data), `check-live.mjs` (look-only), `check-link.mjs` (a sign-in link: preview fetches, then a real press of the button; uses the link up, so make it for a temporary account).
 
 ## Working on it
 
@@ -74,7 +84,30 @@ node tools/check-ui.mjs http://localhost:3072 joe some-password shots
 
 `PROBE=1` plants an over-wide element so you can see the sideways-scroll check fail.
 
+Stop a scratch server by the PID on its port (`ss -ltnp | grep :3072`). **Never `pkill -f` on the script path:** the host's process list also shows the live container's node process.
+
 `tools/check-live.mjs <url> <user> <password> <dir>` only looks (every tab at 390px, nothing changed), so it's safe against the live copy with a temporary account. Run it against an **empty** house too: the seeded check never sees the first-day screens.
+
+## Rules for changes
+
+- **Prove a fix on the running copy before saying it's done**, and make sure the check can fail: show it failing on the fault first where that's cheap. Passing tests alone aren't proof; three of the bugs below passed every test.
+- **Keep it easy.** A new feature must not add a required field or a step to adding a job. Plain words on screen ("People we pay", not "Contractors"; "Upkeep", not "Recurring tasks").
+- **Database:** `server/src/db.ts` holds numbered migrations. Never edit one that has shipped; add a new one. Back up `./data` before deploying a migration.
+- **Money is pence, dates are `YYYY-MM-DD` strings** in the person's timezone (`shared/dates.ts`). Don't use `Date` sums on them.
+- **Undo, not "Are you sure?"**: changes happen at once with an Undo toast.
+- Screen changes: run `check-ui.mjs` on a seeded scratch copy **and** `check-live.mjs` on an empty one, then look at the screenshots.
+- Test a Docker build from a fresh clone when files are added or `.gitignore` changes (an unanchored ignore line once hid source files in a sister project).
+
+## Traps already found
+
+- **A GET must never spend a sign-in link.** WhatsApp's preview fetch used up Nia's first link, and was handed a session as her. `GET /l/:token` only looks (`peekLink`); the button's `POST` spends it (`useLink`). The form post needs the `application/x-www-form-urlencoded` parser in `routes/auth.ts`, or Fastify answers 415.
+- **Don't change the route while a screen is first drawing.** `Welcome.svelte` redirected during init inside `{#key route.path}` and left a blank screen with only the tab bar, everywhere except iPhone Safari. Do it in `onMount`.
+- **The empty house looks different from the seeded one.** A swollen "Add the first job" button (`.welcome .big` also matched the button) only showed on the live, empty copy. Hence `check-live.mjs` and its oversized-button check.
+- **Upkeep dated far ahead isn't "what fits tonight".** `resting()` in `Home.svelte` hides repeating jobs due more than 21 days away from that list only. Ordinary dated jobs must stay in it.
+- A check that waits for an element can hide a blank page by crashing first. Wait on the URL, then measure the text on the page.
+- `tools/check-ui.mjs` and `tools/seed-demo.mjs` change data: scratch copies only.
+- `./data` must be owned by uid 1000 or the container can't open the database.
+- `git mv -k` on an untracked file silently does nothing.
 
 ## Deploy
 
@@ -85,5 +118,7 @@ cd ~/DockerSource/Nest && git pull && docker compose up -d --build
 ```
 
 - Container `nest`, `127.0.0.1:3070` on the host, `nest:3000` on `nginx-proxy-nw` for nginx-proxy-manager.
-- `./data` holds `nest.db` and `photos/`; it must be owned by uid 1000 (the container's `node` user). Back it up before anything risky.
+- `./data` holds `nest.db` and `photos/`; it must be owned by uid 1000 (the container's `node` user). Back it up before anything risky: `docker compose stop && sudo tar czf ~/nest-backup-$(date +%F).tgz data && docker compose start`.
+- The proxy host is nginx-proxy-manager's, forwarding to `nest:3000` with SSL forced and HTTP/2, and no Basic Auth.
+- After a deploy: `curl -s http://127.0.0.1:3070/api/health` shows the version, then run `check-live.mjs` with a temporary account (`add-user keeper`, then `delete-user keeper`).
 - Accounts: `docker exec -i nest nest add-user <name> [--display X] [--admin]` (password on stdin), `docker exec nest nest login-link <name>`, `docker exec nest nest list-users`.
