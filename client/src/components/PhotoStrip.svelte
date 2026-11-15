@@ -56,6 +56,23 @@
     show(next);
   }
 
+  // Swipe down to close, left or right for the next photo.
+  let touch: { x: number; y: number } | null = null;
+  function touchStart(e: TouchEvent) {
+    touch = e.touches.length === 1 ? { x: e.touches[0].clientX, y: e.touches[0].clientY } : null;
+  }
+  function touchEnd(e: TouchEvent) {
+    if (!touch || e.changedTouches.length !== 1) return;
+    const dx = e.changedTouches[0].clientX - touch.x;
+    const dy = e.changedTouches[0].clientY - touch.y;
+    touch = null;
+    if (dy > 70 && dy > Math.abs(dx)) show(null);
+    else if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy)) {
+      const to = photos[index + (dx < 0 ? 1 : -1)];
+      if (to) show(to.id);
+    }
+  }
+
   $effect(() => {
     if (!open) return;
     const prev = document.body.style.overflow;
@@ -91,14 +108,14 @@
 
 {#if open}
   <div class="viewer" role="dialog" aria-modal="true" aria-label="Photo">
-    <div class="bar">
+    <div class="vtop">
       <button class="vbtn" onclick={() => show(null)} aria-label="Close"><Icon name="close" /></button>
       <span class="count">{index + 1} of {photos.length}</span>
       <button class="vbtn del" class:sure={confirming} onclick={() => remove(open)} aria-label="Delete photo">
         <Icon name="trash" />{#if confirming}<span>Tap again to delete</span>{/if}
       </button>
     </div>
-    <div class="stage">
+    <div class="stage" role="group" aria-label="Swipe down to close" ontouchstart={touchStart} ontouchend={touchEnd}>
       {#key open.id}
         <img src={photoUrl(open.id)} alt={open.caption ?? ''} />
       {/key}
@@ -215,7 +232,10 @@
       opacity: 0;
     }
   }
-  .bar {
+  /* Not ".bar": app.css has a global .bar (the 6px progress bars) that squashed this to a
+     sliver and hid the Close button. */
+  .vtop {
+    flex: none;
     display: flex;
     align-items: center;
     justify-content: space-between;
