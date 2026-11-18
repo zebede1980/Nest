@@ -11,7 +11,7 @@ Joe and Nia's home-improvement tracker (started 2026-11-11), and since v0.2.0 ot
 
 ## Where we are (2026-11-18)
 
-- **v0.2.0 (more than one house) is built and tested, not yet deployed.** Branch `feat/multi-house`. Joe chose true multi-house over a second container: house 1 is Joe and Nia's existing data, house 2 is for Joe's dad and step-mum, and Joe is a global admin. Real names, the address and their room list stay out of this public repo: the houses are made and named with the CLI at deploy (see "Deploy: going to v0.2.0" below).
+- **v0.2.0 (more than one house) is live since 2026-11-18** (5ba7c81). After the deploy every live row and old column was checked identical to the stopped-state backup, the houses and accounts were made with the CLI, and `check-live.mjs` passed through the proxy in both houses (temporary accounts, then deleted). The second house's people have sign-in links; nobody there has signed in yet, and nothing has been tried on a real iPhone. Joe chose true multi-house over a second container: house 1 is Joe and Nia's existing data, house 2 is for Joe's dad and step-mum, and Joe is a global admin. Real names, the address and their room list stay out of this public repo: the houses are made and named with the CLI at deploy (see "Going to v0.2.0" under Deploy).
 - **Rehearsed on a copy of the live data (2026-11-18):** the v2 migration kept every row and every old column identical, everything landed in house 1; then the CLI set up both houses, `check-live.mjs` passed for both (one empty), and a headless WebKit run did the global admin's look-after-another-house flow.
 - Backup taken before any of this: tag `pre-multihouse` (37aa1d5) and the data outside the repo (see Deploy).
 
