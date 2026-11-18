@@ -27,6 +27,8 @@ interface UserRow {
   password_hash: string | null;
   role: 'admin' | 'member';
   settings: string;
+  house_id: number;
+  global_admin: number;
   created_at: number;
   last_login_at: number | null;
   last_seen_at: number | null;
@@ -61,6 +63,8 @@ const toUser = (r: UserRow): User => ({
   username: r.username,
   displayName: r.display_name,
   role: r.role,
+  houseId: r.house_id,
+  globalAdmin: !!r.global_admin,
   hasPassword: !!r.password_hash,
   settings: readSettings(r.settings),
   lastLoginAt: r.last_login_at,
@@ -80,8 +84,10 @@ export class Accounts {
     return (this.db.prepare('SELECT COUNT(*) AS n FROM users').get() as { n: number }).n;
   }
 
-  list(): User[] {
-    return (this.db.prepare('SELECT * FROM users ORDER BY id').all() as unknown as UserRow[]).map(toUser);
+  /** Everyone, or everyone in one house. */
+  list(houseId?: number): User[] {
+    const rows = houseId === undefined ? this.db.prepare('SELECT * FROM users ORDER BY id').all() : this.db.prepare('SELECT * FROM users WHERE house_id = ? ORDER BY id').all(houseId);
+    return (rows as unknown as UserRow[]).map(toUser);
   }
 
   active(): User[] {
@@ -98,12 +104,13 @@ export class Accounts {
     return r ? toUser(r) : null;
   }
 
-  create(username: string, displayName: string, role: 'admin' | 'member'): User {
+  create(username: string, displayName: string, role: 'admin' | 'member', houseId: number): User {
     if (!USERNAME_RE.test(username)) throw new Error('Usernames are 2–32 letters, numbers, dots, dashes or underscores');
     if (this.findByName(username)) throw new Error(`There is already a user called ${username}`);
+    if (!this.db.prepare('SELECT 1 FROM houses WHERE id = ?').get(houseId)) throw new Error('There is no such house');
     const r = this.db
-      .prepare('INSERT INTO users (username, display_name, role, created_at) VALUES (?, ?, ?, ?)')
-      .run(username, displayName || username, role, this.now());
+      .prepare('INSERT INTO users (username, display_name, role, house_id, created_at) VALUES (?, ?, ?, ?, ?)')
+      .run(username, displayName || username, role, houseId, this.now());
     return this.findById(Number(r.lastInsertRowid))!;
   }
 
@@ -118,9 +125,29 @@ export class Accounts {
     return (await verify(r.password_hash, password)) ? toUser(r) : null;
   }
 
-  update(userId: number, fields: { displayName?: string; role?: 'admin' | 'member' }): void {
+  update(userId: number, fields: { displayName?: string; role?: 'admin' | 'member'; globalAdmin?: boolean }): void {
     if (fields.displayName !== undefined) this.db.prepare('UPDATE users SET display_name = ? WHERE id = ?').run(fields.displayName, userId);
     if (fields.role !== undefined) this.db.prepare('UPDATE users SET role = ? WHERE id = ?').run(fields.role, userId);
+    if (fields.globalAdmin !== undefined) this.db.prepare('UPDATE users SET global_admin = ? WHERE id = ?').run(fields.globalAdmin ? 1 : 0, userId);
+  }
+
+  /** Moves someone to another house. Jobs given to them in the old house go back to "anyone",
+   *  and anyone looking at another house is brought home. */
+  moveTo(userId: number, houseId: number): void {
+    const u = this.findById(userId);
+    if (!u) throw new Error('No such person');
+    if (!this.db.prepare('SELECT 1 FROM houses WHERE id = ?').get(houseId)) throw new Error('There is no such house');
+    if (u.houseId === houseId) return;
+    this.db.exec('BEGIN');
+    try {
+      this.db.prepare('UPDATE jobs SET assignee_id = NULL WHERE assignee_id = ? AND house_id = ?').run(userId, u.houseId);
+      this.db.prepare('UPDATE users SET house_id = ? WHERE id = ?').run(houseId, userId);
+      this.db.prepare('UPDATE sessions SET house_id = NULL WHERE user_id = ?').run(userId);
+      this.db.exec('COMMIT');
+    } catch (err) {
+      this.db.exec('ROLLBACK');
+      throw err;
+    }
   }
 
   saveSettings(userId: number, settings: UserSettings): void {
@@ -152,12 +179,14 @@ export class Accounts {
   }
 
   /** The user behind a session token, sliding its expiry forward; null if unknown or expired.
-   *  `renewed` is true when the cookie should be re-sent with a fresh max-age. */
-  lookupSession(token: string | undefined): { user: User; renewed: boolean } | null {
+   *  `renewed` is true when the cookie should be re-sent with a fresh max-age.
+   *  `houseId` is the house this session works in: always their own, unless a global admin
+   *  has chosen to look at another one. */
+  lookupSession(token: string | undefined): { user: User; renewed: boolean; houseId: number } | null {
     if (!token) return null;
     const id = digest(token);
-    const row = this.db.prepare('SELECT user_id, last_seen_at, expires_at FROM sessions WHERE id = ?').get(id) as
-      | { user_id: number; last_seen_at: number; expires_at: number }
+    const row = this.db.prepare('SELECT user_id, last_seen_at, expires_at, house_id FROM sessions WHERE id = ?').get(id) as
+      | { user_id: number; last_seen_at: number; expires_at: number; house_id: number | null }
       | undefined;
     const now = this.now();
     if (!row) return null;
@@ -173,7 +202,12 @@ export class Accounts {
       this.db.prepare('UPDATE users SET last_seen_at = ? WHERE id = ?').run(now, user.id);
       renewed = true;
     }
-    return { user, renewed };
+    return { user, renewed, houseId: user.globalAdmin && row.house_id ? row.house_id : user.houseId };
+  }
+
+  /** A global admin chooses which house this session works in (null: their own). */
+  viewHouse(token: string, houseId: number | null): void {
+    this.db.prepare('UPDATE sessions SET house_id = ? WHERE id = ?').run(houseId, digest(token));
   }
 
   endSession(token: string): void {

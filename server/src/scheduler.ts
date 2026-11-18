@@ -7,6 +7,7 @@ import { hmToMinutes, localDate, localMinutes, niceDate } from '../../shared/dat
 import { needsMe, reminderWords, remindersFor, type Reminder } from '../../shared/reminders.js';
 import type { Job } from '../../shared/model.js';
 import type { User } from './accounts.js';
+import type { House } from './house.js';
 import { keyHandled, notify, type NotifyDeps, type SentNotification } from './notify.js';
 import type { Ctx } from './http.js';
 
@@ -18,13 +19,14 @@ export const DONE_SETTLE_MS = 45_000;
 /** ...and not at all if it's older than this (the server was down; the moment has gone). */
 const DONE_WINDOW_MS = 30 * 60_000;
 
-/** What one person would be reminded of right now (nothing is sent). */
-export function plan(ctx: Pick<Ctx, 'db' | 'now' | 'house'>, user: User): { today: string; reminders: Reminder[]; due: boolean; badge: number } {
+/** What one person would be reminded of right now (nothing is sent). Reminders are only ever
+ *  about their own house, even for a global admin who's looking at another one. */
+export function plan(ctx: Pick<Ctx, 'db' | 'now' | 'houseFor'>, user: User): { today: string; reminders: Reminder[]; due: boolean; badge: number } {
   const now = ctx.now();
   const s = user.settings;
   const today = localDate(now, s.tz);
   const minutes = localMinutes(now, s.tz);
-  const jobs = ctx.house.jobs();
+  const jobs = ctx.houseFor(user.houseId).jobs();
   const reminders = remindersFor(jobs, user.id, s.remind, today);
   const due = reminders.length > 0 && minutes >= hmToMinutes(s.remindAt) && minutes < LATEST_MIN && !keyHandled(ctx.db, user.id, `remind:${today}`);
   return { today, reminders, due, badge: needsMe(jobs, user.id, today) };
@@ -34,7 +36,7 @@ const who = (ctx: Pick<Ctx, 'accounts'>, id: number | null) => (id ? ctx.account
 
 const CHEERS = ['Nice one.', 'One less on the list.', 'Kettle on?', 'That one’s been waiting.', 'Onwards!'];
 
-/** Tells everyone else (who wants to know) that a job was finished. */
+/** Tells everyone else in the house (who wants to know) that a job was finished. */
 async function announceDone(ctx: Ctx, user: User, jobs: Job[], rooms: Map<number, string>, badge: number): Promise<SentNotification[]> {
   if (!user.settings.headsUp) return [];
   const now = ctx.now();
@@ -57,27 +59,28 @@ async function announceDone(ctx: Ctx, user: User, jobs: Job[], rooms: Map<number
 /** Sends whatever is due for one person. */
 export async function nudgeUser(ctx: Ctx, user: User): Promise<SentNotification[]> {
   const { today, reminders, due, badge } = plan(ctx, user);
-  const rooms = ctx.house.rooms();
+  const house = ctx.houseFor(user.houseId);
+  const rooms = house.rooms();
   const sent: SentNotification[] = [];
   if (due) {
     const words = reminderWords(reminders, rooms, today);
     const r = await notify(ctx.notifyDeps, user.id, { ...words, badge }, { kind: 'reminder', jobIds: [...new Set(reminders.map((x) => x.job.id))], keys: [`remind:${today}`] });
     if (r) sent.push(r);
   }
-  sent.push(...(await announceDone(ctx, user, ctx.house.jobs(), new Map(rooms.map((r) => [r.id, r.name])), badge)));
+  sent.push(...(await announceDone(ctx, user, house.jobs(), new Map(rooms.map((r) => [r.id, r.name])), badge)));
   return sent;
 }
 
-/** Straight away, when someone gives a job to somebody else. */
-export async function announceAssigned(ctx: Ctx, job: Job, by: User): Promise<SentNotification | null> {
+/** Straight away, when someone gives a job to somebody else (who lives in that house). */
+export async function announceAssigned(ctx: Ctx, house: House, job: Job, by: User): Promise<SentNotification | null> {
   const to = job.assigneeId ? ctx.accounts.findById(job.assigneeId) : null;
-  if (!to || to.id === by.id || to.disabled || !to.settings.headsUp || job.status !== 'todo') return null;
+  if (!to || to.id === by.id || to.disabled || to.houseId !== house.id || !to.settings.headsUp || job.status !== 'todo') return null;
   const today = localDate(ctx.now(), to.settings.tz);
-  const room = ctx.house.rooms().find((r) => r.id === job.roomId)?.name;
+  const room = house.rooms().find((r) => r.id === job.roomId)?.name;
   return notify(
     ctx.notifyDeps,
     to.id,
-    { title: `🧰 ${by.displayName} gave you “${job.title}”`, body: [room, job.dueDate ? `due ${job.dueDate === today ? 'today' : niceDate(job.dueDate, today)}` : null].filter(Boolean).join(' · '), url: `/job/${job.id}`, tag: `job-${job.id}`, badge: needsMe(ctx.house.jobs(), to.id, today) },
+    { title: `🧰 ${by.displayName} gave you “${job.title}”`, body: [room, job.dueDate ? `due ${job.dueDate === today ? 'today' : niceDate(job.dueDate, today)}` : null].filter(Boolean).join(' · '), url: `/job/${job.id}`, tag: `job-${job.id}`, badge: needsMe(house.jobs(), to.id, today) },
     { kind: 'assigned', jobIds: [job.id], keys: [`assigned:${job.id}:${ctx.now()}`], ttl: 24 * 3600 },
   );
 }
@@ -104,7 +107,7 @@ export function startScheduler(ctx: Ctx): () => void {
         ctx.log(`Sent ${n.kind} #${n.id} "${n.title}" to ${n.delivered}/${n.devices} devices${n.error ? ` (${n.error})` : ''}`);
       }
       // A calendar change that didn't get through is tried again.
-      if (ctx.calendar.dirty) await ctx.calendar.sync();
+      for (const cal of ctx.calendars.all()) if (cal.dirty) await cal.sync();
     } finally {
       busy = false;
     }

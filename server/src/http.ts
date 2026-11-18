@@ -7,14 +7,18 @@ import type { Db } from './db.js';
 import type { Devices } from './push.js';
 import type { NotifyDeps } from './notify.js';
 import type { House } from './house.js';
-import type { Calendar } from './gcal.js';
+import type { Houses } from './houses.js';
+import type { Calendars } from './gcal.js';
 import { isHm, isIsoDate } from '../../shared/dates.js';
 
 export interface Ctx {
   db: Db;
   accounts: Accounts;
-  house: House;
-  calendar: Calendar;
+  houses: Houses;
+  /** One house's jobs, rooms and the rest: everything in it is locked to that house. */
+  houseFor: (houseId: number) => House;
+  /** Each house's own Google calendar link. */
+  calendars: Calendars;
   /** Where photos are kept. */
   photoDir: string;
   devices: Devices;
@@ -28,6 +32,8 @@ declare module 'fastify' {
   interface FastifyRequest {
     user: User | null;
     sessionToken: string | null;
+    /** The house this request works in: the person's own, or the one a global admin chose. */
+    houseId: number | null;
   }
 }
 
@@ -57,9 +63,26 @@ export function requireUser(req: FastifyRequest, reply: FastifyReply): User | nu
   return req.user;
 }
 
+/** Signed in, with the house they're working in. Every house route starts here. */
+export function requireMember(ctx: Pick<Ctx, 'houseFor'>, req: FastifyRequest, reply: FastifyReply): { user: User; house: House } | null {
+  const user = requireUser(req, reply);
+  if (!user) return null;
+  return { user, house: ctx.houseFor(req.houseId ?? user.houseId) };
+}
+
+/** An admin of the house they're working in (or a global admin, who is admin of every house). */
 export function requireAdmin(req: FastifyRequest, reply: FastifyReply): User | null {
   const user = requireUser(req, reply);
-  if (user && user.role !== 'admin') {
+  if (user && user.role !== 'admin' && !user.globalAdmin) {
+    void reply.code(403).send({ ok: false, error: 'admin_only' });
+    return null;
+  }
+  return user;
+}
+
+export function requireGlobalAdmin(req: FastifyRequest, reply: FastifyReply): User | null {
+  const user = requireUser(req, reply);
+  if (user && !user.globalAdmin) {
     void reply.code(403).send({ ok: false, error: 'admin_only' });
     return null;
   }

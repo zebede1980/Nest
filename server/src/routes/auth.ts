@@ -1,4 +1,4 @@
-import type { FastifyInstance, FastifyReply } from 'fastify';
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { APP_NAME, APP_URL } from '../config.js';
 import { LINK_MS } from '../accounts.js';
 import { BadInput, body, bool, has, hm, idParam, oneOf, requireAdmin, requireUser, SESSION_COOKIE, setSessionCookie, text, type Ctx } from '../http.js';
@@ -74,10 +74,18 @@ export function authRoutes(app: FastifyInstance, ctx: Ctx): void {
     return { ok: true, user: ctx.accounts.findById(me.id) };
   });
 
-  // ── People (admin) ───────────────────────────────────────────────────────
+  // ── People (admin of the house being worked in) ──────────────────────────
+  // An admin only ever sees and changes the people of the house they're working in: their
+  // own, or, for a global admin, the one they've chosen. Anyone else answers 404.
+  const workingHouse = (req: FastifyRequest) => req.houseId ?? req.user!.houseId;
+  const personHere = (req: FastifyRequest) => {
+    const p = ctx.accounts.findById(idParam(req));
+    return p && p.houseId === workingHouse(req) ? p : null;
+  };
+
   app.get('/api/users', async (req, reply) => {
     if (!requireAdmin(req, reply)) return;
-    return { ok: true, users: ctx.accounts.list() };
+    return { ok: true, users: ctx.accounts.list(workingHouse(req)) };
   });
 
   app.post('/api/users', async (req, reply) => {
@@ -88,7 +96,7 @@ export function authRoutes(app: FastifyInstance, ctx: Ctx): void {
     if (ctx.accounts.findByName(username)) return reply.code(409).send({ ok: false, error: 'name_taken' });
     let user;
     try {
-      user = ctx.accounts.create(username, displayName, 'member');
+      user = ctx.accounts.create(username, displayName, 'member', workingHouse(req));
     } catch (err) {
       throw new BadInput((err as Error).message);
     }
@@ -97,24 +105,27 @@ export function authRoutes(app: FastifyInstance, ctx: Ctx): void {
 
   app.post('/api/users/:id/link', async (req, reply) => {
     if (!requireAdmin(req, reply)) return;
-    const id = idParam(req);
-    if (!ctx.accounts.findById(id)) return reply.code(404).send({ ok: false, error: 'not_found' });
-    return { ok: true, url: `${APP_URL}/l/${ctx.accounts.createLink(id)}`, expiresAt: ctx.now() + LINK_MS };
+    const p = personHere(req);
+    if (!p) return reply.code(404).send({ ok: false, error: 'not_found' });
+    return { ok: true, url: `${APP_URL}/l/${ctx.accounts.createLink(p.id)}`, expiresAt: ctx.now() + LINK_MS };
   });
 
   app.post('/api/users/:id/disable', async (req, reply) => {
     const me = requireAdmin(req, reply);
     if (!me) return;
-    const id = idParam(req);
-    if (id === me.id) return reply.code(400).send({ ok: false, error: 'not_yourself' });
-    ctx.accounts.disable(id);
-    ctx.accounts.endAllSessions(id);
+    const p = personHere(req);
+    if (!p) return reply.code(404).send({ ok: false, error: 'not_found' });
+    if (p.id === me.id) return reply.code(400).send({ ok: false, error: 'not_yourself' });
+    ctx.accounts.disable(p.id);
+    ctx.accounts.endAllSessions(p.id);
     return { ok: true };
   });
 
   app.post('/api/users/:id/restore', async (req, reply) => {
     if (!requireAdmin(req, reply)) return;
-    ctx.accounts.restore(idParam(req));
+    const p = personHere(req);
+    if (!p) return reply.code(404).send({ ok: false, error: 'not_found' });
+    ctx.accounts.restore(p.id);
     return { ok: true };
   });
 

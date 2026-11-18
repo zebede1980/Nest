@@ -241,6 +241,41 @@ export const MIGRATIONS: string[] = [
     ('Box Room', 5, 11, unixepoch() * 1000),
     ('Upstairs Bathroom', 0, 12, unixepoch() * 1000);
   `,
+
+  // v2: more than one house. Everything already here becomes house 1, in place: the new
+  // columns default to 1, so nothing is copied or rebuilt. Each person belongs to one house;
+  // a global admin can look after any of them (sessions.house_id is the one they're looking at).
+  // The house's real name is set from the command line, so it never sits in this (public) file.
+  `
+  CREATE TABLE houses (
+    id         INTEGER PRIMARY KEY,
+    name       TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+  );
+  INSERT INTO houses (id, name, created_at) VALUES (1, 'Our house', unixepoch() * 1000);
+
+  ALTER TABLE users ADD COLUMN house_id INTEGER NOT NULL DEFAULT 1 REFERENCES houses(id);
+  ALTER TABLE users ADD COLUMN global_admin INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE sessions ADD COLUMN house_id INTEGER REFERENCES houses(id) ON DELETE SET NULL;
+  ALTER TABLE rooms ADD COLUMN house_id INTEGER NOT NULL DEFAULT 1 REFERENCES houses(id);
+  ALTER TABLE trades ADD COLUMN house_id INTEGER NOT NULL DEFAULT 1 REFERENCES houses(id);
+  ALTER TABLE jobs ADD COLUMN house_id INTEGER NOT NULL DEFAULT 1 REFERENCES houses(id);
+  ALTER TABLE notes ADD COLUMN house_id INTEGER NOT NULL DEFAULT 1 REFERENCES houses(id);
+  ALTER TABLE photos ADD COLUMN house_id INTEGER NOT NULL DEFAULT 1 REFERENCES houses(id);
+  ALTER TABLE calendar_events ADD COLUMN house_id INTEGER NOT NULL DEFAULT 1 REFERENCES houses(id);
+
+  CREATE INDEX users_house ON users(house_id);
+  CREATE INDEX rooms_house ON rooms(house_id);
+  CREATE INDEX trades_house ON trades(house_id);
+  CREATE INDEX jobs_house ON jobs(house_id, deleted_at);
+  CREATE INDEX notes_house ON notes(house_id);
+  CREATE INDEX photos_house ON photos(house_id);
+  CREATE INDEX calendar_house ON calendar_events(house_id);
+
+  -- The calendar link was the household's; now each house has its own.
+  UPDATE settings SET key = 'gcal:1' WHERE key = 'gcal';
+  UPDATE settings SET key = 'gcal_status:1' WHERE key = 'gcal_status';
+  `,
 ];
 
 export const SCHEMA_VERSION = MIGRATIONS.length;
@@ -259,16 +294,27 @@ function migrate(db: Db): void {
   if (current > MIGRATIONS.length) {
     throw new Error(`Database is schema v${current}, but this build only knows v${MIGRATIONS.length}`);
   }
-  for (let v = current; v < MIGRATIONS.length; v++) {
-    db.exec('BEGIN');
-    try {
-      db.exec(MIGRATIONS[v]);
-      db.exec(`PRAGMA user_version = ${v + 1}`);
-      db.exec('COMMIT');
-    } catch (err) {
-      db.exec('ROLLBACK');
-      throw err;
+  if (current === MIGRATIONS.length) return;
+  // Foreign keys are off while migrating: SQLite won't add a REFERENCES column with a
+  // default while they're on, and a table rebuild with them on would cascade-delete rows.
+  // (The pragma can't change inside a transaction.) The keys are checked before committing.
+  db.exec('PRAGMA foreign_keys = OFF');
+  try {
+    for (let v = current; v < MIGRATIONS.length; v++) {
+      db.exec('BEGIN');
+      try {
+        db.exec(MIGRATIONS[v]);
+        const broken = db.prepare('PRAGMA foreign_key_check').all();
+        if (broken.length) throw new Error(`Migration to v${v + 1} broke ${broken.length} links between tables: ${JSON.stringify(broken.slice(0, 5))}`);
+        db.exec(`PRAGMA user_version = ${v + 1}`);
+        db.exec('COMMIT');
+      } catch (err) {
+        db.exec('ROLLBACK');
+        throw err;
+      }
     }
+  } finally {
+    db.exec('PRAGMA foreign_keys = ON');
   }
 }
 

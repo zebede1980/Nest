@@ -4,7 +4,7 @@
 import { createReadStream, existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
-import { BadInput, body, idParam, requireUser, text, type Ctx } from '../http.js';
+import { BadInput, body, idParam, requireMember, text, type Ctx } from '../http.js';
 
 export const MAX_PHOTO_BYTES = 8 * 1024 * 1024;
 
@@ -30,49 +30,58 @@ export function photoRoutes(app: FastifyInstance, ctx: Ctx): void {
   app.addContentTypeParser('image/jpeg', { parseAs: 'buffer', bodyLimit: MAX_PHOTO_BYTES }, (_req, payload, done) => done(null, payload));
 
   app.post('/api/photos', { bodyLimit: MAX_PHOTO_BYTES }, async (req, reply) => {
-    const user = requireUser(req, reply);
-    if (!user) return;
+    const m = requireMember(ctx, req, reply);
+    if (!m) return;
+    const { user, house } = m;
     if (!isJpeg(req.body)) throw new BadInput("That photo didn't arrive in one piece. Try again.");
     const caption = (req.query as { caption?: string }).caption?.trim().slice(0, 80) || null;
-    const id = ctx.house.addPhoto(user.id, { jobId: queryInt(req, 'job'), roomId: queryInt(req, 'room'), costId: queryInt(req, 'cost'), caption, w: queryInt(req, 'w') ?? 0, h: queryInt(req, 'h') ?? 0 });
+    const id = house.addPhoto(user.id, { jobId: queryInt(req, 'job'), roomId: queryInt(req, 'room'), costId: queryInt(req, 'cost'), caption, w: queryInt(req, 'w') ?? 0, h: queryInt(req, 'h') ?? 0 });
     try {
       writeFileSync(photoFile(ctx.photoDir, id), req.body);
     } catch (err) {
-      ctx.house.deletePhoto(id);
+      house.deletePhoto(id);
       throw err;
     }
     return { ok: true, id };
   });
 
   app.put('/api/photos/:id/thumb', { bodyLimit: 512 * 1024 }, async (req, reply) => {
-    if (!requireUser(req, reply)) return;
+    const m = requireMember(ctx, req, reply);
+    if (!m) return;
+    const { house } = m;
     const id = idParam(req);
-    ctx.house.photo(id);
+    house.photo(id);
     if (!isJpeg(req.body)) throw new BadInput('bad thumbnail');
     writeFileSync(photoFile(ctx.photoDir, id, true), req.body);
-    ctx.house.markThumb(id);
+    house.markThumb(id);
     return { ok: true };
   });
 
   app.put('/api/photos/:id', async (req, reply) => {
-    if (!requireUser(req, reply)) return;
-    ctx.house.captionPhoto(idParam(req), text(body(req), 'caption', { max: 80, optional: true }));
+    const m = requireMember(ctx, req, reply);
+    if (!m) return;
+    const { house } = m;
+    house.captionPhoto(idParam(req), text(body(req), 'caption', { max: 80, optional: true }));
     return { ok: true };
   });
 
   app.delete('/api/photos/:id', async (req, reply) => {
-    if (!requireUser(req, reply)) return;
+    const m = requireMember(ctx, req, reply);
+    if (!m) return;
+    const { house } = m;
     const id = idParam(req);
-    ctx.house.deletePhoto(id);
+    house.deletePhoto(id);
     removePhotoFiles(ctx.photoDir, [id]);
     return { ok: true };
   });
 
   // A photo never changes once saved, so the phone can keep it.
   const send = (thumb: boolean) => async (req: FastifyRequest, reply: import('fastify').FastifyReply) => {
-    if (!requireUser(req, reply)) return;
+    const m = requireMember(ctx, req, reply);
+    if (!m) return;
+    const { house } = m;
     const id = idParam(req);
-    const p = ctx.house.photo(id);
+    const p = house.photo(id);
     const file = photoFile(ctx.photoDir, id, thumb && p.hasThumb);
     if (!existsSync(file)) return reply.code(404).send({ ok: false, error: 'not_found' });
     return reply.type('image/jpeg').header('Cache-Control', 'private, max-age=31536000, immutable').send(createReadStream(file));

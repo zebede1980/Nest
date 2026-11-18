@@ -128,8 +128,15 @@ export interface Note {
 
 /** Everything about the house, sent whole: it's two people and a few hundred jobs. */
 export interface House {
+  id: number;
+  name: string;
+  /** True when a global admin is looking at a house that isn't their own. */
+  visiting: boolean;
   today: string;
+  /** The people who live here. */
   people: Person[];
+  /** Global admins from elsewhere, so "added by" can name them. Never given jobs. */
+  visitors: Person[];
   rooms: Room[];
   jobs: Job[];
   trades: Trade[];
@@ -162,7 +169,12 @@ export interface Me {
   id: number;
   username: string;
   displayName: string;
+  /** Admin of their own house: adds people, connects the calendar. */
   role: 'admin' | 'member';
+  /** The house they belong to. */
+  houseId: number;
+  /** Can look after every house, and add new ones. */
+  globalAdmin: boolean;
 }
 
 export interface PushMessage {

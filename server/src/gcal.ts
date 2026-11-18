@@ -61,6 +61,28 @@ function plain(err: unknown, cfg: Pick<Config, 'clientEmail'>): string {
   return `Couldn't reach Google: ${(err as Error).message}`;
 }
 
+/** The calendar link for each house, made as they're needed. */
+export class Calendars {
+  private readonly byHouse = new Map<number, Calendar>();
+
+  constructor(private readonly make: (houseId: number) => Calendar, private readonly houseIds: () => number[]) {}
+
+  for(houseId: number): Calendar {
+    let c = this.byHouse.get(houseId);
+    if (!c) this.byHouse.set(houseId, (c = this.make(houseId)));
+    return c;
+  }
+
+  all(): Calendar[] {
+    return this.houseIds().map((id) => this.for(id));
+  }
+
+  stop(): void {
+    for (const c of this.byHouse.values()) c.stop();
+  }
+}
+
+/** One house's link to its Google calendar. */
 export class Calendar {
   private token: { value: string; until: number; email: string } | null = null;
   private chain: Promise<unknown> = Promise.resolve();
@@ -77,21 +99,29 @@ export class Calendar {
     private readonly log: (msg: string) => void,
   ) {}
 
+  private get key(): string {
+    return `gcal:${this.house.id}`;
+  }
+
+  private get statusKey(): string {
+    return `gcal_status:${this.house.id}`;
+  }
+
   private config(): Config | null {
-    const raw = getSetting(this.db, 'gcal');
+    const raw = getSetting(this.db, this.key);
     return raw ? (JSON.parse(raw) as Config) : null;
   }
 
   status(): CalendarStatus {
     const cfg = this.config();
-    const st = JSON.parse(getSetting(this.db, 'gcal_status') ?? '{}') as { lastSyncAt?: number; error?: string | null };
-    const { n } = this.db.prepare('SELECT COUNT(*) AS n FROM calendar_events').get() as { n: number };
+    const st = JSON.parse(getSetting(this.db, this.statusKey) ?? '{}') as { lastSyncAt?: number; error?: string | null };
+    const { n } = this.db.prepare('SELECT COUNT(*) AS n FROM calendar_events WHERE house_id = ?').get(this.house.id) as { n: number };
     return { connected: !!cfg, calendarId: cfg?.calendarId ?? null, clientEmail: cfg?.clientEmail ?? null, events: n, lastSyncAt: st.lastSyncAt ?? null, error: cfg ? (st.error ?? null) : null };
   }
 
   private note(error: string | null): void {
-    const was = JSON.parse(getSetting(this.db, 'gcal_status') ?? '{}') as { lastSyncAt?: number };
-    putSetting(this.db, 'gcal_status', JSON.stringify({ lastSyncAt: error ? was.lastSyncAt : this.now(), error }));
+    const was = JSON.parse(getSetting(this.db, this.statusKey) ?? '{}') as { lastSyncAt?: number };
+    putSetting(this.db, this.statusKey, JSON.stringify({ lastSyncAt: error ? was.lastSyncAt : this.now(), error }));
   }
 
   // ── Google ───────────────────────────────────────────────────────────────
@@ -154,7 +184,7 @@ export class Calendar {
     }
     // Anything we put in a previous calendar comes out of it first.
     if (this.config()) await this.disconnect();
-    putSetting(this.db, 'gcal', JSON.stringify(cfg));
+    putSetting(this.db, this.key, JSON.stringify(cfg));
     this.note(null);
     await this.sync();
     return this.status();
@@ -165,10 +195,11 @@ export class Calendar {
     await (this.chain = this.chain.then(async () => {
       const cfg = this.config();
       if (!cfg) return;
-      for (const row of this.db.prepare('SELECT event_id FROM calendar_events').all() as { event_id: string }[]) {
+      for (const row of this.db.prepare('SELECT event_id FROM calendar_events WHERE house_id = ?').all(this.house.id) as { event_id: string }[]) {
         await this.call(cfg, 'DELETE', `/events/${row.event_id}`).catch(() => {});
       }
-      this.db.exec("DELETE FROM calendar_events; DELETE FROM settings WHERE key IN ('gcal', 'gcal_status')");
+      this.db.prepare('DELETE FROM calendar_events WHERE house_id = ?').run(this.house.id);
+      this.db.prepare('DELETE FROM settings WHERE key IN (?, ?)').run(this.key, this.statusKey);
       this.token = null;
     }));
   }
@@ -227,8 +258,13 @@ export class Calendar {
     if (!cfg) return null;
     this.dirty = false;
     const want = this.wanted();
-    const have = new Map((this.db.prepare('SELECT ref, event_id, hash FROM calendar_events').all() as { ref: string; event_id: string; hash: string }[]).map((r) => [r.ref, r]));
-    const save = this.db.prepare('INSERT INTO calendar_events (ref, event_id, hash, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(ref) DO UPDATE SET event_id = excluded.event_id, hash = excluded.hash, updated_at = excluded.updated_at');
+    const have = new Map(
+      (this.db.prepare('SELECT ref, event_id, hash FROM calendar_events WHERE house_id = ?').all(this.house.id) as { ref: string; event_id: string; hash: string }[]).map((r) => [r.ref, r]),
+    );
+    // Refs (job:12, step:40) are unique across houses, since ids are.
+    const save = this.db.prepare(
+      'INSERT INTO calendar_events (house_id, ref, event_id, hash, updated_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(ref) DO UPDATE SET event_id = excluded.event_id, hash = excluded.hash, updated_at = excluded.updated_at',
+    );
     const out = { added: 0, changed: 0, removed: 0 };
     try {
       for (const [ref, ev] of want) {
@@ -249,7 +285,7 @@ export class Calendar {
           eventId = (await this.call(cfg, 'POST', '/events', ev.body)).id as string;
           out.added++;
         }
-        save.run(ref, eventId, ev.hash, this.now());
+        save.run(this.house.id, ref, eventId, ev.hash, this.now());
       }
       for (const [ref, row] of have) {
         if (want.has(ref)) continue;
@@ -258,7 +294,7 @@ export class Calendar {
         } catch (err) {
           if (!(err instanceof GoogleError) || (err.status !== 404 && err.status !== 410)) throw err;
         }
-        this.db.prepare('DELETE FROM calendar_events WHERE ref = ?').run(ref);
+        this.db.prepare('DELETE FROM calendar_events WHERE ref = ? AND house_id = ?').run(ref, this.house.id);
         out.removed++;
       }
       this.note(null);

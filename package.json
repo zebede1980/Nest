@@ -1,6 +1,6 @@
 {
   "name": "nest",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "Nest: the jobs around our home, who is doing them, what they cost and how far we have come",
   "type": "module",

@@ -6,10 +6,12 @@ import fastifyStatic from '@fastify/static';
 import { Accounts } from './accounts.js';
 import { openDb, type Db } from './db.js';
 import { BadInput, CSRF_HEADER, SESSION_COOKIE, setSessionCookie, type Ctx } from './http.js';
-import { Calendar, type Fetch } from './gcal.js';
-import { House, NotFound } from './house.js';
+import { Calendar, Calendars, type Fetch } from './gcal.js';
+import { emptyBin, House, NotFound } from './house.js';
+import { Houses } from './houses.js';
 import { Devices, vapidKeys, webPushSender, type PushSender } from './push.js';
 import { authRoutes } from './routes/auth.js';
+import { houseAdminRoutes } from './routes/houses.js';
 import { houseRoutes } from './routes/house.js';
 import { photoRoutes, removePhotoFiles } from './routes/photos.js';
 import { pushRoutes } from './routes/push.js';
@@ -39,6 +41,8 @@ export interface App {
   app: FastifyInstance;
   db: Db;
   ctx: Ctx;
+  /** Every route, as registered: tests/houses.test.ts tries each one from the wrong house. */
+  routes: { method: string; url: string }[];
 }
 
 export async function buildApp(opts: AppOptions): Promise<App> {
@@ -58,12 +62,15 @@ export async function buildApp(opts: AppOptions): Promise<App> {
   const keys = vapidKeys(db);
   const devices = new Devices(db, now);
   const log = (msg: string) => app.log.info(msg);
-  const house = new House(db, now);
+  const houses = new Houses(db, now);
+  const houseFor = (houseId: number) => new House(db, now, houseId);
+  const googleFetch: Fetch = opts.fetch ?? ((url, init) => fetch(url, init));
   const ctx: Ctx = {
     db,
     accounts: new Accounts(db, now),
-    house,
-    calendar: new Calendar(db, house, now, opts.fetch ?? ((url, init) => fetch(url, init)), opts.appUrl, log),
+    houses,
+    houseFor,
+    calendars: new Calendars((houseId) => new Calendar(db, houseFor(houseId), now, googleFetch, opts.appUrl, log), () => houses.ids()),
     photoDir: opts.photoDir,
     devices,
     vapidPublicKey: keys.publicKey,
@@ -72,13 +79,19 @@ export async function buildApp(opts: AppOptions): Promise<App> {
     log,
   };
   app.addHook('onClose', async () => {
-    ctx.calendar.stop();
+    ctx.calendars.stop();
     db.close();
+  });
+
+  const routes: App['routes'] = [];
+  app.addHook('onRoute', (r) => {
+    for (const method of [r.method].flat()) if (method !== 'HEAD') routes.push({ method, url: r.url });
   });
 
   await app.register(fastifyCookie);
   app.decorateRequest('user', null);
   app.decorateRequest('sessionToken', null);
+  app.decorateRequest('houseId', null);
 
   app.addHook('onRequest', async (req, reply) => {
     const url = req.url.split('?')[0];
@@ -91,14 +104,15 @@ export async function buildApp(opts: AppOptions): Promise<App> {
     if (found && token) {
       req.user = found.user;
       req.sessionToken = token;
+      req.houseId = found.houseId;
       // Re-send the cookie now and then, so the browser's year keeps sliding too.
       if (found.renewed) setSessionCookie(req, reply, token);
     }
   });
 
-  // Anything that changes the house may change what belongs in the shared calendar.
+  // Anything that changes a house may change what belongs in that house's calendar.
   app.addHook('onResponse', async (req, reply) => {
-    if (req.method !== 'GET' && reply.statusCode < 400 && req.url.startsWith('/api/') && !req.url.startsWith('/api/calendar')) ctx.calendar.poke();
+    if (req.houseId && req.method !== 'GET' && reply.statusCode < 400 && req.url.startsWith('/api/') && !req.url.startsWith('/api/calendar')) ctx.calendars.for(req.houseId).poke();
   });
 
   app.setErrorHandler((err, req, reply) => {
@@ -113,6 +127,7 @@ export async function buildApp(opts: AppOptions): Promise<App> {
   app.get('/api/health', async () => ({ ok: true, name: 'nest', version: opts.version, time: new Date(now()).toISOString() }));
 
   authRoutes(app, ctx);
+  houseAdminRoutes(app, ctx);
   houseRoutes(app, ctx);
   photoRoutes(app, ctx);
   pushRoutes(app, ctx);
@@ -138,7 +153,7 @@ export async function buildApp(opts: AppOptions): Promise<App> {
   const prune = () => {
     ctx.accounts.prune();
     // Jobs deleted a month ago go for good, and their photos with them.
-    removePhotoFiles(ctx.photoDir, ctx.house.emptyBin());
+    removePhotoFiles(ctx.photoDir, emptyBin(db, now()));
   };
   prune();
   const timer = setInterval(prune, 60 * 60_000);
@@ -150,5 +165,5 @@ export async function buildApp(opts: AppOptions): Promise<App> {
     app.addHook('onClose', async () => stop());
   }
 
-  return { app, db, ctx };
+  return { app, db, ctx, routes };
 }

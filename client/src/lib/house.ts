@@ -4,7 +4,8 @@ import { countsForProgress, isRepeating, jobSpent, jobTotal, paidOn, type Cost, 
 import { addDays, weekday } from '../../../shared/dates';
 
 export const roomOf = (h: House, id: number | null): Room | undefined => (id == null ? undefined : h.rooms.find((r) => r.id === id));
-export const personOf = (h: House, id: number | null): Person | undefined => (id == null ? undefined : h.people.find((p) => p.id === id));
+/** Someone who lives here, or a global admin from another house who added or did something. */
+export const personOf = (h: House, id: number | null): Person | undefined => (id == null ? undefined : (h.people.find((p) => p.id === id) ?? h.visitors.find((p) => p.id === id)));
 export const jobOf = (h: House, id: number | null): Job | undefined => (id == null ? undefined : h.jobs.find((j) => j.id === id));
 export const liveRooms = (h: House) => h.rooms.filter((r) => !r.archived);
 

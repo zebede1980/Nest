@@ -2,6 +2,7 @@
   import JobSheet from './components/JobSheet.svelte';
   import TabBar from './components/TabBar.svelte';
   import Toast from './components/Toast.svelte';
+  import VisitBar from './components/VisitBar.svelte';
   import Home from './screens/Home.svelte';
   import Ideas from './screens/Ideas.svelte';
   import JobPage from './screens/JobPage.svelte';
@@ -87,6 +88,7 @@
 {:else if !app.house}
   <div class="splash" aria-label="Loading"><span></span></div>
 {:else}
+  {#if app.house.visiting}<VisitBar />{/if}
   {#key route.path}
     {#if route.path === '/welcome'}
       <Welcome />

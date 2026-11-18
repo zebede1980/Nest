@@ -190,6 +190,10 @@ button:disabled {
   animation: page-in 0.28s var(--ease);
 }
 /* Pages without the tab bar (a job, opened on its own). */
+:root.visiting .page {
+  /* Room for the "Looking after…" bar. */
+  padding-top: calc(64px + env(safe-area-inset-top));
+}
 .page.bare {
   padding-bottom: calc(120px + env(safe-area-inset-bottom));
 }

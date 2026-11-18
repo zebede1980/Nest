@@ -87,7 +87,7 @@ export function pushRoutes(app: FastifyInstance, ctx: Ctx): void {
       ok: true,
       sent: recentNotifications(ctx.db, user.id, 40),
       // What today's reminder says (or would say), for the settings page.
-      today: p.reminders.length ? reminderWords(p.reminders, ctx.house.rooms(), p.today) : null,
+      today: p.reminders.length ? reminderWords(p.reminders, ctx.houseFor(user.houseId).rooms(), p.today) : null,
     };
   });
 

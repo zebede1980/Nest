@@ -12,7 +12,7 @@
     { path: '/ideas', icon: 'idea', title: 'Ideas', sub: ideas(h).length ? `${ideas(h).length} for one day` : 'Wouldn’t it be nice if…' },
     { path: '/notes', icon: 'note', title: 'Notes', sub: h.notes.length ? `${h.notes.length} kept` : 'Wi-Fi code, bin day, the boiler’s quirks' },
     { path: '/trades', icon: 'trade', title: 'People we pay', sub: owed ? `${money(owed)} to pay` : 'Plumbers, sparkies, their numbers and bills' },
-    { path: '/settings', icon: 'settings', title: 'Settings', sub: 'Reminders, calendar, who’s in the house' },
+    { path: '/settings', icon: 'settings', title: 'Settings', sub: app.me?.globalAdmin ? 'Reminders, calendar, people, houses' : 'Reminders, calendar, who’s in the house' },
   ]);
 </script>
 
@@ -25,6 +25,7 @@
       {#each h.people as p (p.id)}<Avatar id={p.id} size={44} />{/each}
     </div>
     <h1>{h.people.map((p) => p.displayName).join(' & ')}</h1>
+    <p class="muted house">{h.name}</p>
   </div>
 
   <div class="rows">
@@ -46,6 +47,9 @@
     display: flex;
     flex-direction: column;
     gap: 10px;
+  }
+  .house {
+    margin: -6px 0 0;
   }
   .linkrow {
     display: flex;

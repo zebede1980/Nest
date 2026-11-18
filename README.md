@@ -68,6 +68,7 @@ git clone https://github.com/zebede1980/Nest && cd Nest
 mkdir -p data && sudo chown 1000:1000 data     # the container runs as uid 1000
 docker compose up -d --build
 docker exec -it nest nest add-user joe --admin --display "Joe"    # asks for a password
+docker exec nest nest rename-house 1 "Our house"                   # the first house is made for you
 docker exec nest nest login-link joe
 ```
 
@@ -113,7 +114,19 @@ Run inside the container as `docker exec -it nest nest <command>`:
 | `nudges <name> [--send]` | What they'd be reminded of right now; `--send` sends it |
 | `sent <name>` | The last notifications they were sent |
 
+| `list-houses` | Every house, its people and how many jobs |
+| `add-house "Name" [--rooms "Kitchen, Lounge, ..."]` | A new house with its rooms, in order |
+| `rename-house <house> "Name"` | `<house>` is its number or name |
+| `set-house <name> <house>` | Moves a person (their jobs in the old house go back to "anyone") |
+| `set-global <name> on\|off` | A global admin can look after every house |
+
 Most of this can also be done in the app by an admin, under Settings.
+
+### More than one house
+
+One Nest can hold several houses, each with its own rooms, jobs, people we pay, notes, photos, reminders and Google calendar. Each person belongs to one house and only ever sees that one. With more than one house, `add-user` needs `--house`.
+
+A house's admin adds its people and connects its calendar. A **global admin** (`set-global <name> on`) also gets an "Every house" section in Settings: they can add houses and look after any of them, with a bar across the top saying whose house it is. Their own reminders stay about their own house.
 
 ## Developing
 

@@ -14,18 +14,27 @@ import { recentNotifications } from './notify.js';
 import { nudgeUser, plan } from './scheduler.js';
 import type { Ctx } from './http.js';
 import { House } from './house.js';
+import { Houses } from './houses.js';
 import { reminderWords } from '../../shared/reminders.js';
 
 const HELP = `nest: Nest admin
 
+  nest list-houses
+  nest add-house "Name" [--rooms "Kitchen, Lounge, ..."]    rooms in order, comma-separated
+  nest rename-house <house> "New name"                    <house> is its number or name
+
   nest list-users
-  nest add-user <name> [--display "Shown Name"] [--admin]   then asks for a password
+  nest add-user <name> --house <house> [--display "Shown Name"] [--admin]
+                                      then asks for a password
+  nest set-house <name> <house>       moves them (their jobs in the old house go to "anyone")
+  nest set-global <name> on|off       a global admin can look after every house
   nest set-password <name>            (signs them out everywhere)
   nest login-link <name>              a one-time sign-in link, good for 7 days
   nest code <name>                    a 15-minute code for the app's "I have a code"
   nest set-display <name> "Shown Name"
   nest set-role <name> admin|member
   nest delete-user <name>             for good, with their sign-ins (the house's jobs stay)
+  (add-user without --house only works while there is just one house)
 
   nest devices <name>                 their phones and browsers that get reminders
   nest nudges <name> [--send]         what they'd be reminded of right now
@@ -43,7 +52,7 @@ function parseArgs(argv: string[]): { positional: string[]; flags: Map<string, s
     const a = argv[i];
     if (a.startsWith('--')) {
       const next = argv[i + 1];
-      if (a === '--display' && next !== undefined) {
+      if ((a === '--display' || a === '--house' || a === '--rooms') && next !== undefined) {
         flags.set(a, next);
         i++;
       } else flags.set(a, true);
@@ -105,6 +114,12 @@ async function main(argv: string[]): Promise<void> {
   const now = Date.now;
   const accounts = new Accounts(db, now);
   const devices = new Devices(db, now);
+  const houses = new Houses(db, now);
+  const house = (h: string | undefined) => {
+    const found = houses.find(need(h, 'house'));
+    if (!found) throw new UserError(`no house called ${h} (nest list-houses)`);
+    return found;
+  };
   const user = (n: string | undefined) => {
     const u = accounts.findByName(need(n, 'name'));
     if (!u) throw new UserError(`no user called ${n}`);
@@ -112,17 +127,50 @@ async function main(argv: string[]): Promise<void> {
   };
 
   switch (command) {
+    case 'list-houses':
+      for (const h of houses.list()) {
+        console.log(`${String(h.id).padStart(2)}  ${h.name.padEnd(24)} ${String(h.jobs).padStart(4)} jobs   ${h.people.map((p) => p.displayName + (p.role === 'admin' ? ' (admin)' : '')).join(', ') || 'nobody yet'}`);
+      }
+      break;
+    case 'add-house': {
+      const rooms = flags.get('--rooms');
+      const id = houses.create(need(name, 'house name'), typeof rooms === 'string' ? rooms.split(',') : []);
+      console.log(`Added house ${id}, ${name}. Add people with: nest add-user <name> --house ${id}`);
+      break;
+    }
+    case 'rename-house':
+      houses.rename(house(name).id, need(rest[0], 'new name'));
+      console.log('Done.');
+      break;
     case 'list-users':
       for (const u of accounts.list()) {
         const n = devices.forUser(u.id).length;
         console.log(
-          `${u.username.padEnd(14)} ${u.displayName.padEnd(16)} ${u.role.padEnd(7)} last sign-in ${when(u.lastLoginAt)}  ${n} device${n === 1 ? '' : 's'}${u.disabled ? '  [removed]' : ''}`,
+          `${u.username.padEnd(14)} ${u.displayName.padEnd(16)} ${u.role.padEnd(7)} ${(houses.find(u.houseId)?.name ?? '?').padEnd(20)} last sign-in ${when(u.lastLoginAt)}  ${n} device${n === 1 ? '' : 's'}${u.globalAdmin ? '  [global admin]' : ''}${u.disabled ? '  [removed]' : ''}`,
         );
       }
       break;
+    case 'set-house': {
+      const u = user(name);
+      const h = house(rest[0]);
+      accounts.moveTo(u.id, h.id);
+      console.log(`${u.displayName} is now in ${h.name}.`);
+      break;
+    }
+    case 'set-global': {
+      const on = need(rest[0], 'on or off');
+      if (on !== 'on' && on !== 'off') throw new UserError('set-global <name> on|off');
+      accounts.update(user(name).id, { globalAdmin: on === 'on' });
+      console.log('Done.');
+      break;
+    }
     case 'add-user': {
       const display = flags.get('--display');
-      const u = accounts.create(need(name, 'name'), typeof display === 'string' ? display : need(name, 'name'), flags.has('--admin') ? 'admin' : 'member');
+      const ids = houses.ids();
+      const h = flags.get('--house');
+      if (typeof h !== 'string' && ids.length !== 1) throw new UserError('which house? add --house <number or name> (nest list-houses)');
+      const houseId = typeof h === 'string' ? house(h).id : ids[0];
+      const u = accounts.create(need(name, 'name'), typeof display === 'string' ? display : need(name, 'name'), flags.has('--admin') ? 'admin' : 'member', houseId);
       await accounts.setPassword(u.id, await getPassword());
       console.log(`Added ${u.username}. For a password-free sign-in: nest login-link ${u.username}`);
       break;
@@ -170,8 +218,8 @@ async function main(argv: string[]): Promise<void> {
       break;
     case 'nudges': {
       const u = user(name);
-      const house = new House(db, now);
-      const ctx = { db, now, accounts, devices, house, log: console.log } as unknown as Ctx;
+      const houseFor = (id: number) => new House(db, now, id);
+      const ctx = { db, now, accounts, devices, houses, houseFor, log: console.log } as unknown as Ctx;
       if (flags.has('--send')) {
         const keys = vapidKeys(db);
         const deps = { db, now, devices, sender: webPushSender(keys, VAPID_SUBJECT), appUrl: APP_URL };
@@ -184,7 +232,7 @@ async function main(argv: string[]): Promise<void> {
       console.log(`Today ${p.today} · needs them: ${p.badge} · reminder ${p.due ? 'is due now' : 'not due now'} (they chose ${u.settings.remind} at ${u.settings.remindAt})`);
       for (const r of p.reminders) console.log(`  ${r.kind.padEnd(8)} ${r.dueDate}  ${r.job.title}${r.step ? ` → ${r.step.title}` : ''}`);
       if (p.reminders.length) {
-        const w = reminderWords(p.reminders, house.rooms(), p.today);
+        const w = reminderWords(p.reminders, houseFor(u.houseId).rooms(), p.today);
         console.log(`\n${w.title}\n${w.body}`);
       } else console.log('  Nothing to remind them of today.');
       break;

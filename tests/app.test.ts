@@ -5,7 +5,7 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { buildApp, type App } from '../server/src/app';
 import type { Fetch } from '../server/src/gcal';
-import { BIN_MS } from '../server/src/house';
+import { BIN_MS, emptyBin } from '../server/src/house';
 import type { PushSender, SendResult, Subscription } from '../server/src/push';
 import { photoFile } from '../server/src/routes/photos';
 import { DONE_SETTLE_MS, runNudges } from '../server/src/scheduler';
@@ -58,7 +58,7 @@ let photoDir: string;
 const H = { 'x-nest': '1' };
 
 async function signIn(name: string, admin = false): Promise<{ cookie: string; id: number }> {
-  const u = a.ctx.accounts.create(name.toLowerCase(), name, admin ? 'admin' : 'member');
+  const u = a.ctx.accounts.create(name.toLowerCase(), name, admin ? 'admin' : 'member', 1);
   const { code } = a.ctx.accounts.createCode(u.id);
   const r = await a.app.inject({ method: 'POST', url: '/api/login/code', headers: H, payload: { code: code.toLowerCase().replace('-', ' ') } });
   expect(r.statusCode).toBe(200);
@@ -92,7 +92,7 @@ afterEach(async () => a.app.close());
 
 describe('sign-in', () => {
   it('refuses changes without the header, a used code, and says 401 only for no session', async () => {
-    const u = a.ctx.accounts.create('joe', 'Joe', 'admin');
+    const u = a.ctx.accounts.create('joe', 'Joe', 'admin', 1);
     const { code } = a.ctx.accounts.createCode(u.id);
     expect((await a.app.inject({ method: 'POST', url: '/api/login/code', payload: { code } })).statusCode).toBe(403);
     expect((await a.app.inject({ method: 'POST', url: '/api/login/code', headers: H, payload: { code } })).statusCode).toBe(200);
@@ -102,7 +102,7 @@ describe('sign-in', () => {
   });
 
   it('a sign-in link survives being looked at (a WhatsApp preview) and is spent by the button', async () => {
-    const u = a.ctx.accounts.create('nia', 'Nia <3', 'member');
+    const u = a.ctx.accounts.create('nia', 'Nia <3', 'member', 1);
     const url = `/l/${a.ctx.accounts.createLink(u.id)}`;
     // WhatsApp, iMessage and friends fetch the link as soon as it's pasted. Twice, for luck.
     for (let i = 0; i < 2; i++) {
@@ -338,7 +338,7 @@ describe('photos', () => {
     await call(joe, 'DELETE', `/api/jobs/${job.id}`);
     expect((await house(joe)).photos).toHaveLength(0);
     clock += BIN_MS + 1000;
-    expect(a.ctx.house.emptyBin()).toEqual([id]);
+    expect(emptyBin(a.db, clock)).toEqual([id]);
     expect((await call(joe, 'POST', `/api/jobs/${job.id}/restore`)).statusCode).toBe(404);
   });
 });
@@ -497,15 +497,15 @@ describe('the shared calendar', () => {
 
     // Nothing changed: nothing sent.
     googleCalls = [];
-    expect(await a.ctx.calendar.sync()).toEqual({ added: 0, changed: 0, removed: 0 });
+    expect(await a.ctx.calendars.for(1).sync()).toEqual({ added: 0, changed: 0, removed: 0 });
     expect(googleCalls).toEqual([]);
 
     await call(joe, 'PUT', `/api/jobs/${mirror.id}`, { dueDate: '2026-11-15' });
-    expect(a.ctx.calendar.dirty).toBe(true);
-    expect(await a.ctx.calendar.sync()).toEqual({ added: 0, changed: 1, removed: 0 });
+    expect(a.ctx.calendars.for(1).dirty).toBe(true);
+    expect(await a.ctx.calendars.for(1).sync()).toEqual({ added: 0, changed: 1, removed: 0 });
     await call(joe, 'POST', `/api/jobs/${mirror.id}/done`, { done: true });
     await call(joe, 'PUT', `/api/steps/${refit.steps[0].id}`, { done: true });
-    expect(await a.ctx.calendar.sync()).toEqual({ added: 0, changed: 0, removed: 2 });
+    expect(await a.ctx.calendars.for(1).sync()).toEqual({ added: 0, changed: 0, removed: 2 });
     expect(google.size).toBe(0);
   });
 
@@ -515,17 +515,17 @@ describe('the shared calendar', () => {
     await connect(joe);
     google.clear();
     await call(joe, 'PUT', `/api/jobs/${job.id}`, { title: 'Paint the fence' });
-    expect(await a.ctx.calendar.sync()).toEqual({ added: 1, changed: 0, removed: 0 });
+    expect(await a.ctx.calendars.for(1).sync()).toEqual({ added: 1, changed: 0, removed: 0 });
     expect(summaries()).toEqual(['2026-11-14 🏡 Paint the fence']);
 
     googleSays = 500;
     await call(joe, 'PUT', `/api/jobs/${job.id}`, { dueDate: '2026-11-16' });
-    expect(await a.ctx.calendar.sync()).toBeNull();
+    expect(await a.ctx.calendars.for(1).sync()).toBeNull();
     expect((await house(joe)).calendar).toMatchObject({ connected: true });
     expect((await house(joe)).calendar.error).toContain('500');
-    expect(a.ctx.calendar.dirty).toBe(true);
+    expect(a.ctx.calendars.for(1).dirty).toBe(true);
     googleSays = null;
-    expect(await a.ctx.calendar.sync()).toEqual({ added: 0, changed: 1, removed: 0 });
+    expect(await a.ctx.calendars.for(1).sync()).toEqual({ added: 0, changed: 1, removed: 0 });
     expect((await house(joe)).calendar.error).toBeNull();
     expect(summaries()).toEqual(['2026-11-16 🏡 Paint the fence']);
 

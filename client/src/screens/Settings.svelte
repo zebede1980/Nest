@@ -29,7 +29,9 @@
   let s = $state<UserSettings>({ ...app.me!.settings });
   let name = $state(app.me!.displayName);
   let look = $state<Look>(getLook());
-  const isAdmin = app.me?.role === 'admin';
+  // A global admin is the admin of whichever house they're looking after.
+  const isAdmin = app.me?.role === 'admin' || !!app.me?.globalAdmin;
+  const isGlobal = !!app.me?.globalAdmin;
 
   async function refreshPush() {
     push = await pushState();
@@ -214,6 +216,55 @@
     }
   }
 
+  // ── The house's name (admin) ──
+  let houseName = $state(app.house!.name);
+  async function renameHouse(e: SubmitEvent) {
+    e.preventDefault();
+    try {
+      await put(`/api/houses/${app.house!.id}`, { name: houseName.trim() });
+      await refresh();
+      toast('House renamed');
+      if (isGlobal) await loadHouses();
+    } catch (err) {
+      showError(err);
+    }
+  }
+
+  // ── Every house (global admin) ──
+  interface HouseRow {
+    id: number;
+    name: string;
+    people: { id: number; displayName: string; disabled: boolean }[];
+    jobs: number;
+  }
+  let houses = $state<HouseRow[]>([]);
+  let newHouse = $state('');
+  let newRooms = $state('');
+  async function loadHouses() {
+    if (isGlobal) houses = (await get<{ houses: HouseRow[] }>('/api/houses')).houses;
+  }
+  void loadHouses().catch(() => {});
+  async function lookAfter(id: number) {
+    try {
+      await post('/api/houses/view', { houseId: id });
+      await refresh();
+      navigate('/', { replace: true });
+    } catch (err) {
+      showError(err);
+    }
+  }
+  async function addHouse(e: SubmitEvent) {
+    e.preventDefault();
+    try {
+      await post('/api/houses', { name: newHouse.trim(), rooms: newRooms });
+      toast(`${newHouse.trim()} added`);
+      newHouse = newRooms = '';
+      await loadHouses();
+    } catch (err) {
+      showError(err);
+    }
+  }
+
   const STATUS: Record<PushState, string> = {
     unsupported: 'This browser can’t do notifications.',
     'needs-install': 'On iPhone, reminders only work from the Home Screen app.',
@@ -348,12 +399,16 @@
 
   {#if isAdmin}
     <section class="section">
-      <div class="section-head"><h2>Who’s in the house</h2></div>
+      <div class="section-head"><h2>Who’s in {app.house?.name}</h2></div>
       <div class="card">
+        <form class="row" onsubmit={renameHouse}>
+          <input class="input" bind:value={houseName} maxlength="80" aria-label="The house’s name" autocapitalize="words" />
+          <button class="btn" disabled={!houseName.trim() || houseName.trim() === app.house?.name}>Rename</button>
+        </form>
         {#each people as p (p.id)}
           <div class="row between">
             <div class="grow">
-              <b>{p.displayName}</b> <span class="faint small">{p.role === 'admin' ? 'runs Nest' : ''}</span>
+              <b>{p.displayName}</b> <span class="faint small">{p.role === 'admin' ? 'runs this house' : ''}</span>
               <div class="small muted">{p.lastLoginAt ? `signed in ${timeAgo(p.lastLoginAt)}` : 'hasn’t signed in yet'}</div>
             </div>
             <button class="btn small" onclick={() => makeLink(p)}>Sign-in link</button>
@@ -370,6 +425,35 @@
             <button class="btn sage small" onclick={shareLink}><Icon name="share" size={16} />Share link</button>
           </div>
         {/if}
+      </div>
+    </section>
+  {/if}
+
+  {#if isGlobal}
+    <section class="section">
+      <div class="section-head"><h2>Every house</h2></div>
+      <div class="card">
+        <p class="small muted">You can look after any house: its jobs, its people and their sign-in links. Your own reminders stay about home.</p>
+        {#each houses as hs (hs.id)}
+          <div class="row between">
+            <div class="grow">
+              <b>{hs.name}</b>{#if hs.id === app.me?.houseId}<span class="faint small">&nbsp;· yours</span>{/if}
+              <div class="small muted">{hs.people.filter((p) => !p.disabled).map((p) => p.displayName).join(', ') || 'Nobody yet'} · {hs.jobs} job{hs.jobs === 1 ? '' : 's'}</div>
+            </div>
+            {#if hs.id === app.house?.id}
+              <span class="small faint">Here now</span>
+            {:else}
+              <button class="btn small" onclick={() => lookAfter(hs.id)}>{hs.id === app.me?.houseId ? 'Go home' : 'Look after'}</button>
+            {/if}
+          </div>
+        {/each}
+        <form class="stack" onsubmit={addHouse}>
+          <label class="field">Add a house <input bind:value={newHouse} placeholder="Its name or address" maxlength="80" autocapitalize="words" /></label>
+          <label class="field">Its rooms, one per line
+            <textarea bind:value={newRooms} rows="4" placeholder={'Kitchen\nLounge\nBathroom'}></textarea>
+          </label>
+          <button class="btn dark block" disabled={!newHouse.trim()}>Add house</button>
+        </form>
       </div>
     </section>
   {/if}
